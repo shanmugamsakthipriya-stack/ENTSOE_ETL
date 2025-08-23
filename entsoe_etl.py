@@ -1,164 +1,133 @@
+import os
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-import pytz
 import xml.etree.ElementTree as ET
-import psycopg2
 from psycopg2.extras import execute_values
+import psycopg2
+from urllib.parse import urlparse
+import pytz
 
-# --------------------------
-# CONFIGURATION
-# --------------------------
+# --- Read secrets from environment variables ---
+SECURITY_TOKEN = os.environ.get("ENTSOE_TOKEN")
+CONN_STR = os.environ.get("SUPABASE_CONN")
+
+# --- ENTSOE API Call ---
 API_URL = "https://web-api.tp.entsoe.eu/api"
-SECURITY_TOKEN = "b99f6903-7ec9-48f2-9cb0-e8359aa76b3a"
-
-# PostgreSQL config
-DB_CONFIG = {
-    "dbname": "postgres",
-    "user": "postgres",
-    "password": "Friday@22",
-    "host": "localhost",
-    "port": "5432"
+PARAMS = {
+    "securityToken": SECURITY_TOKEN,
+    "documentType": "A81",
+    "businessType": "B95",
+    "processType": "A52",
+    "Type_MarketAgreement.Type": "A01",
+    "controlArea_Domain": "10YDE-RWENET---I",
+    "periodStart": "202409242200",
+    "periodEnd": "202409252200"
 }
 
-TABLE_NAME = "entsoe_reserves"
+response = requests.get(API_URL, params=PARAMS)
+response.raise_for_status()
+xml_data = response.content
 
-# Timezone
-CET = pytz.timezone("CET")
+# --- Parse XML with namespace ---
+root = ET.fromstring(xml_data)
+ns = {'ns': root.tag.split('}')[0].strip('{')}
 
-# --------------------------
-# HELPER FUNCTIONS
-# --------------------------
+# --- Mapping dictionaries ---
+direction_map = {
+    "A01": "Up",
+    "A02": "Down",
+    "A03": "Up and Down (Symmetric)"
+}
 
-def fetch_entsoe_data(start_period, end_period, document_type="A81", business_type="B95",
-                      process_type="A52", market_agreement="A01", area_domain="10YDE-RWENET---I"):
-    """
-    Fetch XML from ENTSOE API and return parsed DataFrame
-    """
-    params = {
-        "securityToken": SECURITY_TOKEN,
-        "documentType": document_type,
-        "businessType": business_type,
-        "processType": process_type,
-        "Type_MarketAgreement.Type": market_agreement,
-        "controlArea_Domain": area_domain,
-        "periodStart": start_period.strftime("%Y%m%d%H%M"),
-        "periodEnd": end_period.strftime("%Y%m%d%H%M")
-    }
+# --- Parse XML ---
+data = []
+cet = pytz.timezone("CET")  # Central European Time
+for ts in root.findall(".//ns:TimeSeries", ns):
+    reserve_type = ts.find("ns:type_MarketAgreement.type", ns).text if ts.find("ns:type_MarketAgreement.type", ns) is not None else None
+    reserve_source = ts.find("ns:mktPSRType.psrType", ns).text if ts.find("ns:mktPSRType.psrType", ns) is not None else None
+    direction_code = ts.find("ns:flowDirection.direction", ns).text if ts.find("ns:flowDirection.direction", ns) is not None else None
+    direction = direction_map.get(direction_code, direction_code)
+    product_type = ts.find("ns:standard_MarketProduct.marketProductType", ns).text if ts.find("ns:standard_MarketProduct.marketProductType", ns) is not None else None
+    time_horizon = ts.find("ns:type_MarketAgreement.type", ns).text if ts.find("ns:type_MarketAgreement.type", ns) is not None else None
+    price_type = "Marginal"
 
-    response = requests.get(API_URL, params=params)
-    response.raise_for_status()
-    xml_data = response.content
+    for period in ts.findall("ns:Period", ns):
+        start_time_str = period.find("ns:timeInterval/ns:start", ns).text
+        resolution = period.find("ns:resolution", ns).text
+        start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
 
-    # Parse XML
-    root = ET.fromstring(xml_data)
-    ns = {'ns': root.tag.split('}')[0].strip('{')}
+        # Determine interval delta
+        if resolution == "PT15M":
+            delta = timedelta(minutes=15)
+        elif resolution == "PT30M":
+            delta = timedelta(minutes=30)
+        else:
+            delta = timedelta(hours=1)
 
-    data = []
-    for ts in root.findall(".//ns:TimeSeries", ns):
-        # Optional fields with fallback
-        reserve_type = ts.find("ns:type_MarketAgreement.type", ns)
-        reserve_type = reserve_type.text if reserve_type is not None else "Unknown"
+        for point in period.findall("ns:Point", ns):
+            quantity_el = point.find("ns:quantity", ns)
+            price_el = point.find("ns:procurement_Price.amount", ns)
+            quantity = float(quantity_el.text) if quantity_el is not None else 0
+            price = float(price_el.text) if price_el is not None else 0
+            end_time = start_time + delta
+            delivery_period = f"{start_time.strftime('%d.%m.%Y %H:%M')} - {end_time.strftime('%d.%m.%Y %H:%M')} (CET/CEST)"
 
-        reserve_source = ts.find("ns:mktPSRType.psrType", ns)
-        reserve_source = reserve_source.text if reserve_source is not None else "Unknown"
+            data.append({
+                "delivery_period": delivery_period,
+                "reserve_type": reserve_type,
+                "reserve_source": reserve_source,
+                "direction": direction,
+                "volume": quantity,
+                "price": price,
+                "price_type": price_type,
+                "type_of_product": product_type,
+                "time_horizon": time_horizon
+            })
+            start_time += delta
 
-        direction = ts.find("ns:flowDirection.direction", ns)
-        direction_map = {"A01": "Up", "A02": "Down", "A03": "Up and Down (Symmetric)"}
-        direction = direction_map.get(direction.text if direction is not None else "", "Unknown")
+# --- Create DataFrame ---
+df = pd.DataFrame(data)
+print(df.head())
 
-        type_of_product = ts.find("ns:standard_MarketProduct.marketProductType", ns)
-        type_of_product = type_of_product.text if type_of_product is not None else "Unknown"
+# --- Connect to Supabase PostgreSQL ---
+result = urlparse(CONN_STR)
+conn = psycopg2.connect(
+    dbname=result.path[1:],
+    user=result.username,
+    password=result.password,
+    host=result.hostname,
+    port=result.port
+)
+cursor = conn.cursor()
 
-        time_horizon = ts.find("ns:type_MarketAgreement.type", ns)
-        time_horizon = time_horizon.text if time_horizon is not None else "Unknown"
+# --- Create table ---
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS entsoe_load_data (
+    delivery_period TEXT,
+    reserve_type TEXT,
+    reserve_source TEXT,
+    direction TEXT,
+    volume DOUBLE PRECISION,
+    price DOUBLE PRECISION,
+    price_type TEXT,
+    type_of_product TEXT,
+    time_horizon TEXT
+)
+""")
+conn.commit()
 
-        for period in ts.findall("ns:Period", ns):
-            start_str = period.find("ns:timeInterval/ns:start", ns).text
-            end_str = period.find("ns:timeInterval/ns:end", ns).text
-            resolution = period.find("ns:resolution", ns).text
+# --- Insert data ---
+records = df.to_dict("records")
+columns = df.columns.tolist()
+values = [[r[col] for col in columns] for r in records]
 
-            start_dt = datetime.strptime(start_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(CET)
-            end_dt = datetime.strptime(end_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(CET)
-
-            for point in period.findall("ns:Point", ns):
-                position = int(point.find("ns:position", ns).text)
-                volume = float(point.find("ns:quantity", ns).text)
-                price_node = point.find("ns:procurement_Price.amount", ns)
-                price = float(price_node.text) if price_node is not None else 0.0
-                price_type_node = point.find("ns:imbalance_Price.category", ns)
-                price_type = price_type_node.text if price_type_node is not None else "Unknown"
-
-                delivery_period = f"{(start_dt + timedelta(minutes=15*(position-1))).strftime('%d.%m.%Y %H:%M')} - {(start_dt + timedelta(minutes=15*position)).strftime('%d.%m.%Y %H:%M')} (CET/CEST)"
-
-                data.append({
-                    "delivery_period": delivery_period,
-                    "reserve_type": reserve_type,
-                    "reserve_source": reserve_source,
-                    "direction": direction,
-                    "volume": volume,
-                    "price": price,
-                    "price_type": price_type,
-                    "type_of_product": type_of_product,
-                    "time_horizon": time_horizon
-                })
-
-    df = pd.DataFrame(data)
-    # Handle nulls safely
-    df.fillna({
-        "reserve_type": "Unknown",
-        "reserve_source": "Unknown",
-        "direction": "Unknown",
-        "volume": 0,
-        "price": 0.0,
-        "price_type": "Unknown",
-        "type_of_product": "Unknown",
-        "time_horizon": "Unknown"
-    }, inplace=True)
-
-    return df
-
-def store_to_postgres(df):
-    conn = psycopg2.connect(**DB_CONFIG)
-    cursor = conn.cursor()
-    # Create table if not exists
-    cursor.execute(f"""
-        CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-            delivery_period TEXT,
-            reserve_type TEXT,
-            reserve_source TEXT,
-            direction TEXT,
-            volume DOUBLE PRECISION,
-            price DOUBLE PRECISION,
-            price_type TEXT,
-            type_of_product TEXT,
-            time_horizon TEXT
-        )
-    """)
-    conn.commit()
-
-    records = df.to_dict("records")
-    columns = df.columns.tolist()
-    values = [[r[col] for col in columns] for r in records]
-
-    execute_values(
-        cursor,
-        f"INSERT INTO {TABLE_NAME} ({', '.join(columns)}) VALUES %s",
-        values
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-    print(f"{len(df)} rows inserted into PostgreSQL table '{TABLE_NAME}'.")
-
-# --------------------------
-# MAIN SCRIPT
-# --------------------------
-if __name__ == "__main__":
-    # Example: historical run for 23.09.2024
-    start_date = datetime(2024, 9, 23, 0, 0)
-    end_date = datetime(2024, 9, 24, 0, 0)
-    
-    df = fetch_entsoe_data(start_date, end_date)
-    store_to_postgres(df)
-    print("ETL run complete!")
+execute_values(
+    cursor,
+    f"INSERT INTO entsoe_load_data ({', '.join(columns)}) VALUES %s",
+    values
+)
+conn.commit()
+cursor.close()
+conn.close()
+print("Data successfully stored in PostgreSQL!")
