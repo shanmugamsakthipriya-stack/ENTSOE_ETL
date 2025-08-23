@@ -1,0 +1,35 @@
+name: Daily ENTSOE ETL
+
+# Trigger: daily at 01:00 UTC, and manually
+on:
+  schedule:
+    - cron: "0 1 * * *"  # 01:00 UTC daily
+  workflow_dispatch:
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      # Step 3: Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas psycopg2-binary pytz
+
+      # Step 4: Run ETL
+      - name: Run ETL script
+        env:
+          ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
+          SUPABASE_CONN: ${{ secrets.SUPABASE_CONN }}
+        run: |
+          python test_3.py
