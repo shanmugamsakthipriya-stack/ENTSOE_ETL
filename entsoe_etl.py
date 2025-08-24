@@ -9,10 +9,12 @@ import pytz
 
 # --- Read secrets from environment variables ---
 SECURITY_TOKEN = os.environ.get("ENTSOE_TOKEN")
-SUPABASE_HOST = os.environ.get("SUPABASE_HOST")        # e.g., db.igtsnbkybiyrtkrqxpco.supabase.co
-SUPABASE_DB = os.environ.get("SUPABASE_DB")            # e.g., postgres
-SUPABASE_USER = os.environ.get("SUPABASE_USER")        # e.g., postgres
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")  # service role key
+
+# Azure PostgreSQL credentials
+AZURE_PG_HOST = os.environ.get("AZURE_PG_HOST")        # e.g., myserver.postgres.database.azure.com
+AZURE_PG_DB = os.environ.get("AZURE_PG_DB")            # e.g., entsoe_db
+AZURE_PG_USER = os.environ.get("AZURE_PG_USER")        # e.g., admin@myserver
+AZURE_PG_PASSWORD = os.environ.get("AZURE_PG_PASSWORD") # password
 
 # --- ENTSOE API Call ---
 API_URL = "https://web-api.tp.entsoe.eu/api"
@@ -93,14 +95,14 @@ for ts in root.findall(".//ns:TimeSeries", ns):
 df = pd.DataFrame(data)
 print(df.head())
 
-# --- Connect to Supabase PostgreSQL using service role key ---
+# --- Connect to Azure PostgreSQL ---
 conn = psycopg2.connect(
-    dbname=SUPABASE_DB,
-    user=SUPABASE_USER,
-    password=SUPABASE_SERVICE_KEY,
-    host=SUPABASE_HOST,
+    dbname=AZURE_PG_DB,
+    user=AZURE_PG_USER,
+    password=AZURE_PG_PASSWORD,
+    host=AZURE_PG_HOST,
     port=5432,
-    sslmode='require'
+    sslmode='require'  # Azure PostgreSQL requires SSL
 )
 cursor = conn.cursor()
 
@@ -134,4 +136,4 @@ conn.commit()
 cursor.close()
 conn.close()
 
-print("Data successfully stored in Supabase PostgreSQL!")
+print("Data successfully stored in Azure PostgreSQL!")
