@@ -1,12 +1,12 @@
 name: ENTSOE ETL
 
+# Triggers:
+# 1. Manually via GitHub UI
+# 2. Scheduled daily at 22:00 UTC
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:       # Manual trigger
   schedule:
-    - cron: "0 1 * * *"  # Daily at 01:00 UTC
-  workflow_dispatch:      # Allows manual trigger
+    - cron: "0 22 * * *"  # Daily at 22:00 UTC
 
 jobs:
   run-etl:
@@ -14,7 +14,8 @@ jobs:
 
     env:
       ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
-      SUPABASE_CONN: ${{ secrets.SUPABASE_CONN }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
     steps:
       - name: Checkout repository
@@ -23,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: '3.10'
 
       - name: Install dependencies
         run: |
@@ -32,6 +33,5 @@ jobs:
 
       - name: Run ETL script
         run: |
-          echo "Starting ETL..."
+          echo "Starting ENTSOE ETL..."
           python entsoe_etl.py
-          echo "ETL finished successfully."
