@@ -5,7 +5,8 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 1 * * *"  # Runs daily at 01:00 UTC
+    - cron: "0 1 * * *"  # Daily at 01:00 UTC
+  workflow_dispatch:      # Allows manual trigger
 
 jobs:
   run-etl:
@@ -13,13 +14,10 @@ jobs:
 
     env:
       ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
-      SUPABASE_HOST: ${{ secrets.SUPABASE_HOST }}
-      SUPABASE_DB: ${{ secrets.SUPABASE_DB }}
-      SUPABASE_USER: ${{ secrets.SUPABASE_USER }}
-      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SUPABASE_CONN: ${{ secrets.SUPABASE_CONN }}
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -33,4 +31,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run ETL script
-        run: python entsoe_etl.py
+        run: |
+          echo "Starting ETL..."
+          python entsoe_etl.py
+          echo "ETL finished successfully."
