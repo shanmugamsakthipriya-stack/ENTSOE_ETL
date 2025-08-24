@@ -7,13 +7,11 @@ from psycopg2.extras import execute_values
 import psycopg2
 from urllib.parse import urlparse
 import pytz
+import socket
 
 # --- Read secrets from environment variables ---
 SECURITY_TOKEN = os.environ.get("ENTSOE_TOKEN")
 CONN_STR = os.environ.get("SUPABASE_CONN")
-
-if not SECURITY_TOKEN or not CONN_STR:
-    raise ValueError("Environment variables ENTSOE_TOKEN and SUPABASE_CONN must be set")
 
 # --- ENTSOE API Call ---
 API_URL = "https://web-api.tp.entsoe.eu/api"
@@ -45,7 +43,7 @@ direction_map = {
 
 # --- Parse XML ---
 data = []
-cet = pytz.timezone("CET")  # Central European Time
+cet = pytz.timezone("CET")
 for ts in root.findall(".//ns:TimeSeries", ns):
     reserve_type = ts.find("ns:type_MarketAgreement.type", ns).text if ts.find("ns:type_MarketAgreement.type", ns) is not None else None
     reserve_source = ts.find("ns:mktPSRType.psrType", ns).text if ts.find("ns:mktPSRType.psrType", ns) is not None else None
@@ -60,7 +58,6 @@ for ts in root.findall(".//ns:TimeSeries", ns):
         resolution = period.find("ns:resolution", ns).text
         start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
 
-        # Determine interval delta
         if resolution == "PT15M":
             delta = timedelta(minutes=15)
         elif resolution == "PT30M":
@@ -93,13 +90,17 @@ for ts in root.findall(".//ns:TimeSeries", ns):
 df = pd.DataFrame(data)
 print(df.head())
 
-# --- Connect to Supabase PostgreSQL ---
+# --- Connect to Supabase PostgreSQL (force IPv4) ---
 result = urlparse(CONN_STR)
+
+# Resolve IPv4 address explicitly
+ipv4_host = socket.gethostbyname(result.hostname)
+
 conn = psycopg2.connect(
     dbname=result.path[1:],
     user=result.username,
     password=result.password,
-    host=result.hostname,
+    host=ipv4_host,  # Force IPv4
     port=result.port,
     sslmode='require'
 )
