@@ -1,4 +1,4 @@
-name: ENTSOE ETL
+name: ENTSOE ETL RETWIN
 
 on:
   push:
