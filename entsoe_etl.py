@@ -12,6 +12,9 @@ import pytz
 SECURITY_TOKEN = os.environ.get("ENTSOE_TOKEN")
 CONN_STR = os.environ.get("SUPABASE_CONN")
 
+if not SECURITY_TOKEN or not CONN_STR:
+    raise ValueError("Environment variables ENTSOE_TOKEN and SUPABASE_CONN must be set")
+
 # --- ENTSOE API Call ---
 API_URL = "https://web-api.tp.entsoe.eu/api"
 PARAMS = {
