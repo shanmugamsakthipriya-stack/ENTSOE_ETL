@@ -41,4 +41,4 @@ jobs:
 
     # 5. Run the ETL script
     - name: Run ETL
-      run: python entsoe_etl_azure.py
+      run: python entsoe_etl.py
