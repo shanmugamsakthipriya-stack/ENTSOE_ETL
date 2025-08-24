@@ -5,13 +5,14 @@ from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 from psycopg2.extras import execute_values
 import psycopg2
-from urllib.parse import urlparse
 import pytz
-import socket
 
 # --- Read secrets from environment variables ---
 SECURITY_TOKEN = os.environ.get("ENTSOE_TOKEN")
-CONN_STR = os.environ.get("SUPABASE_CONN")
+SUPABASE_HOST = os.environ.get("SUPABASE_HOST")        # e.g., db.igtsnbkybiyrtkrqxpco.supabase.co
+SUPABASE_DB = os.environ.get("SUPABASE_DB")            # e.g., postgres
+SUPABASE_USER = os.environ.get("SUPABASE_USER")        # e.g., postgres
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")  # service role key
 
 # --- ENTSOE API Call ---
 API_URL = "https://web-api.tp.entsoe.eu/api"
@@ -43,7 +44,8 @@ direction_map = {
 
 # --- Parse XML ---
 data = []
-cet = pytz.timezone("CET")
+cet = pytz.timezone("Europe/Berlin")  # CET/CEST with DST handled
+
 for ts in root.findall(".//ns:TimeSeries", ns):
     reserve_type = ts.find("ns:type_MarketAgreement.type", ns).text if ts.find("ns:type_MarketAgreement.type", ns) is not None else None
     reserve_source = ts.find("ns:mktPSRType.psrType", ns).text if ts.find("ns:mktPSRType.psrType", ns) is not None else None
@@ -58,6 +60,7 @@ for ts in root.findall(".//ns:TimeSeries", ns):
         resolution = period.find("ns:resolution", ns).text
         start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
 
+        # Determine interval delta
         if resolution == "PT15M":
             delta = timedelta(minutes=15)
         elif resolution == "PT30M":
@@ -90,23 +93,18 @@ for ts in root.findall(".//ns:TimeSeries", ns):
 df = pd.DataFrame(data)
 print(df.head())
 
-# --- Connect to Supabase PostgreSQL (force IPv4) ---
-result = urlparse(CONN_STR)
-
-# Resolve IPv4 address explicitly
-ipv4_host = socket.gethostbyname(result.hostname)
-
+# --- Connect to Supabase PostgreSQL using service role key ---
 conn = psycopg2.connect(
-    dbname=result.path[1:],
-    user=result.username,
-    password=result.password,
-    host=ipv4_host,  # Force IPv4
-    port=result.port,
+    dbname=SUPABASE_DB,
+    user=SUPABASE_USER,
+    password=SUPABASE_SERVICE_KEY,
+    host=SUPABASE_HOST,
+    port=5432,
     sslmode='require'
 )
 cursor = conn.cursor()
 
-# --- Create table ---
+# --- Create table if not exists ---
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS entsoe_load_data (
     delivery_period TEXT,
@@ -135,4 +133,5 @@ execute_values(
 conn.commit()
 cursor.close()
 conn.close()
-print("Data successfully stored in PostgreSQL!")
+
+print("Data successfully stored in Supabase PostgreSQL!")
