@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from psycopg2.extras import execute_values
 import psycopg2
 import pytz
+import sys
 
 # --- Read secrets from environment variables ---
 SECURITY_TOKEN = os.environ.get("ENTSOE_TOKEN")
@@ -170,8 +171,7 @@ def daily_load():
 
 # --- Entry point ---
 if __name__ == "__main__":
-    # Uncomment for historical load once
-    # historical_load()
-
-    # Daily load
-    daily_load()
+    if '--historical' in sys.argv:
+        historical_load()
+    else:
+        daily_load()
