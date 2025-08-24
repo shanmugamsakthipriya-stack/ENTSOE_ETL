@@ -1,15 +1,26 @@
 name: ENTSOE ETL
 
 on:
-  workflow_dispatch:   # Manual trigger
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Choose ETL mode"
+        required: true
+        default: "daily"
+        type: choice
+        options:
+          - daily
+          - historical
   schedule:
-    - cron: '0 2 * * *'  # Daily at 02:00 UTC
+    - cron: '0 2 * * *'   # Runs daily at 02:00 UTC
 
 jobs:
   run-etl:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -34,9 +45,16 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
-          python entsoe_etl.py
+          if [ "${{ github.event.inputs.mode }}" = "historical" ]; then
+            echo "Running historical load..."
+            python entsoe_etl.py --historical
+          else
+            echo "Running daily load..."
+            python entsoe_etl.py
+          fi
 
       - name: Upload log
+        if: always()
         uses: actions/upload-artifact@v3
         with:
           name: etl-log
