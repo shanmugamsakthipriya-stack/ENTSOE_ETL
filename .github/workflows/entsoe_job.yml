@@ -1,7 +1,7 @@
 name: ENTSOE ETL
 
 on:
-  workflow_dispatch:b
+  workflow_dispatch:
     inputs:
       mode:
         description: "Choose ETL mode"
