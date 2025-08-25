@@ -321,20 +321,26 @@ def historical_load():
     start_date = datetime(2024, 1, 1)
     end_date = datetime.utcnow()
     current = start_date
-    while current <= end_date:
+    interval_days = 30
+    logging.info(f"Starting historical load from {start_date.date()} to {end_date.date()}")
+    
+    while current < end_date:
         period_start = current.strftime('%Y%m%d%H%M')
-        period_end = (current + timedelta(days=30)).strftime('%Y%m%d%H%M')
-        logging.info(f"Fetching historical data: {period_start} - {period_end}")
+        period_end_dt = min(current + timedelta(days=interval_days), end_date)
+        period_end = period_end_dt.strftime('%Y%m%d%H%M')
+        logging.info(f"Processing interval: {period_start} - {period_end}")
         
         # Balancing reserves per TSO
         for tso_name, control_area in germany_control_areas.items():
+            logging.info(f"Fetching data for {tso_name}")
             fetch_and_store_data(period_start, period_end, f"Germany-{tso_name}", control_area)
             
         # Day-ahead prices per bidding zone
+        logging.info(f"Fetching day-ahead prices for {germany_bidding_zone}")
         fetch_and_store_dayahead_prices(period_start, period_end, "BZN|DE-LU", germany_bidding_zone)
         
-        current += timedelta(days=30)
-
+        current += timedelta(days=interval_days)
+        logging.info(f"Completed interval up to {period_end}")
 
 # --- Daily load ---
 def daily_load():
