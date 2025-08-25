@@ -200,7 +200,90 @@ def fetch_and_store_data(period_start, period_end, country_name, control_area):
         logging.error(f"ETL failed for {country_name} {period_start} - {period_end}: {e}", exc_info=True)
         send_email_alert("ENTSOE ETL Failed", f"{country_name} {period_start}-{period_end}\n{e}")
         raise
+        
+def fetch_and_store_dayahead_prices(period_start, period_end, country_name, bidding_zone):
+    try:
+        API_URL = "https://web-api.tp.entsoe.eu/api"
+        PARAMS = {
+            "securityToken": SECURITY_TOKEN,
+            "documentType": "A44",   # Day-ahead prices
+            "in_Domain": bidding_zone,
+            "out_Domain": bidding_zone,
+            "periodStart": period_start,
+            "periodEnd": period_end
+        }
 
+        response = requests.get(API_URL, params=PARAMS)
+        response.raise_for_status()
+        xml_data = response.content
+
+        root = ET.fromstring(xml_data)
+        ns = {'ns': root.tag.split('}')[0].strip('{')}
+
+        data = []
+        cet = pytz.timezone("Europe/Berlin")
+
+        for ts in root.findall(".//ns:TimeSeries", ns):
+            start_time_str = ts.find("ns:Period/ns:timeInterval/ns:start", ns).text
+            start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
+
+            for point in ts.findall(".//ns:Point", ns):
+                position = int(point.find("ns:position", ns).text)
+                price = float(point.find("ns:price.amount", ns).text)
+
+                mtu_start = start_time + timedelta(minutes=15 * (position - 1))
+                mtu_end = mtu_start + timedelta(minutes=15)
+
+                data.append({
+                    "mtu": f"{mtu_start.strftime('%d.%m.%Y %H:%M')} - {mtu_end.strftime('%d.%m.%Y %H:%M')} (CET/CEST)",
+                    "price_eur_mwh": price,
+                    "country": country_name
+                })
+
+        if not data:
+            logging.warning(f"No Day-ahead data for {country_name} {period_start} - {period_end}")
+            return
+
+        df = pd.DataFrame(data)
+
+        conn = psycopg2.connect(
+            dbname=AZURE_PG_DB,
+            user=AZURE_PG_USER,
+            password=AZURE_PG_PASSWORD,
+            host=AZURE_PG_HOST,
+            port=5432,
+            sslmode='require'
+        )
+        cursor = conn.cursor()
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS day_ahead_prices (
+            mtu TEXT,
+            price_eur_mwh DOUBLE PRECISION,
+            country TEXT,
+            inserted_at TIMESTAMP DEFAULT now()
+        )
+        """)
+        conn.commit()
+
+        records = df.to_dict("records")
+        columns = df.columns.tolist()
+        values = [[r.get(col) for col in columns] for r in records]
+
+        execute_values(
+            cursor,
+            f"INSERT INTO day_ahead_prices ({', '.join(columns)}) VALUES %s",
+            values
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logging.info(f"Inserted {len(df)} Day-ahead price rows for {country_name} {period_start} - {period_end}")
+
+    except Exception as e:
+        logging.error(f"Day-ahead ETL failed for {country_name} {period_start} - {period_end}: {e}", exc_info=True)
+        send_email_alert("ENTSOE Day-ahead ETL Failed", f"{country_name} {period_start}-{period_end}\n{e}")
+        raise
 
 # --- Historical load ---
 def historical_load():
@@ -221,8 +304,10 @@ def daily_load():
     period_start = yesterday.strftime('%Y%m%d0000')
     period_end = yesterday.strftime('%Y%m%d2300')
     for country_name, control_area in countries.items():
+        # Balancing reserve ETL
         fetch_and_store_data(period_start, period_end, country_name, control_area)
-
+        # Day-ahead price ETL (use bidding zone same as control_area if needed)
+        fetch_and_store_dayahead_prices(period_start, period_end, country_name, control_area)
 
 # --- Entry point ---
 if __name__ == "__main__":
