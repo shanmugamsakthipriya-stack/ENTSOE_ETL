@@ -1,14 +1,9 @@
 name: ENTSOE ETL
 
 on:
-  workflow_dispatch:
-    inputs:
-      run_type:
-        description: 'Type of run: daily or historical'
-        required: true
-        default: 'daily'
   schedule:
-    - cron: '0 2 * * *'  # daily at 02:00 UTC
+    - cron: '0 2 * * *'  # Daily at 02:00 UTC
+  workflow_dispatch:
 
 jobs:
   run-etl:
@@ -24,28 +19,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Determine run type
-        id: set_run_type
-        run: |
-          RUN_TYPE="${{ github.event.inputs.run_type }}"
-          if [ -z "$RUN_TYPE" ]; then
-              RUN_TYPE="daily"
-          fi
-          echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
-
-      - name: Check last historical run
-        id: check_history
-        run: |
-          LAST_RUN_FILE=".last_historical_run"
-          if [ -f "$LAST_RUN_FILE" ]; then
-              LAST_RUN=$(cat $LAST_RUN_FILE)
-              echo "Last historical run: $LAST_RUN"
-              echo "already_ran=true" >> $GITHUB_OUTPUT
-          else
-              echo "No previous historical run found"
-              echo "already_ran=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Run ETL
         env:
           ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
@@ -59,16 +32,5 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
-          if [ "${{ steps.set_run_type.outputs.run_type }}" = "historical" ]; then
-              if [ "${{ steps.check_history.outputs.already_ran }}" = "true" ]; then
-                  echo "Historical ETL already completed. Skipping..."
-              else
-                  echo "Running historical load..."
-                  python entsoe_etl.py --historical
-                  date +"%Y-%m-%d %H:%M:%S" > .last_historical_run
-              fi
-          else
-              echo "Running daily load..."
-              python entsoe_etl.py --daily
-          fi
-          
+          echo "Starting ENTSOE ETL..."
+          python entsoe_etl.py
