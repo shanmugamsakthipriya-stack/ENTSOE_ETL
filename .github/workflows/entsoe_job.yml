@@ -2,7 +2,7 @@ name: ENTSOE ETL
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # Daily at 02:00 UTC
+    - cron: '0 2 * * *'  # daily at 02:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -33,4 +33,13 @@ jobs:
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
           echo "Starting ENTSOE ETL..."
-          python entsoe_etl.py
+          python entsoe_etl.py || echo "ETL failed, see log file"
+
+      - name: Upload logs and historical marker
+        if: always()   # Upload even if previous step fails
+        uses: actions/upload-artifact@v3
+        with:
+          name: etl-artifacts
+          path: |
+            entsoe_etl.log
+            .last_historical_run
