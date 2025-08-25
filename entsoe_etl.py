@@ -321,14 +321,18 @@ def historical_load():
     start_date = datetime(2024, 1, 1)
     end_date = datetime.utcnow()
     current = start_date
-    while current < end_date:
+    while current <= end_date:
         period_start = current.strftime('%Y%m%d%H%M')
         period_end = (current + timedelta(days=30)).strftime('%Y%m%d%H%M')
+        logging.info(f"Fetching historical data: {period_start} - {period_end}")
+        
         # Balancing reserves per TSO
         for tso_name, control_area in germany_control_areas.items():
             fetch_and_store_data(period_start, period_end, f"Germany-{tso_name}", control_area)
+            
         # Day-ahead prices per bidding zone
         fetch_and_store_dayahead_prices(period_start, period_end, "BZN|DE-LU", germany_bidding_zone)
+        
         current += timedelta(days=30)
 
 
@@ -337,27 +341,30 @@ def daily_load():
     y = datetime.utcnow() - timedelta(days=1)
     period_start = y.strftime('%Y%m%d0000')
     period_end = (y + timedelta(days=1)).strftime('%Y%m%d0000')
+    
     for tso_name, control_area in germany_control_areas.items():
         # Balancing reserve ETL
         fetch_and_store_data(period_start, period_end, f"Germany-{tso_name}", control_area)
+        
     # Day-ahead prices per bidding zone
     fetch_and_store_dayahead_prices(period_start, period_end, "BZN|DE-LU", germany_bidding_zone)
 
 # --- Entry point ---
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ENTSOE ETL")
-    parser.add_argument('--historical', action='store_true', help='Run historical load')
-    parser.add_argument('--daily', action='store_true', help='Run daily load (default)')
-    args = parser.parse_args()
-
     try:
-        if args.historical:
-            logging.info("Starting historical load...")
+        # Check if historical has been run
+        last_run_file = ".last_historical_run"
+        if not os.path.exists(last_run_file):
+            logging.info("Running historical backfill from Jan 1, 2024...")
             historical_load()
-        else:
-            logging.info("Starting daily load...")
-            daily_load()
+            with open(last_run_file, "w") as f:
+                f.write(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+
+        logging.info("Running daily load...")
+        daily_load()
+
         logging.info("ETL completed successfully.")
+
     except Exception as e:
         logging.error(f"ETL failed: {e}", exc_info=True)
         send_email_alert("ENTSOE ETL Failed", str(e))
