@@ -3,24 +3,18 @@ name: ENTSOE ETL
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: "Choose ETL mode"
+      run_type:
+        description: 'Type of run: daily or historical'
         required: true
-        default: "daily"
-        type: choice
-        options:
-          - daily
-          - historical
+        default: 'daily'
   schedule:
-    - cron: '0 2 * * *'   # Runs daily at 02:00 UTC
+    - cron: '0 2 * * *'  # daily at 02:00 UTC
 
 jobs:
   run-etl:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -28,9 +22,29 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Determine run type
+        id: set_run_type
         run: |
-          python -m pip install --upgrade pip
-          pip install pandas psycopg2-binary requests pytz
+          RUN_TYPE="${{ github.event.inputs.run_type }}"
+          if [ -z "$RUN_TYPE" ]; then
+              RUN_TYPE="daily"
+          fi
+          echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
+
+      - name: Check last historical run
+        id: check_history
+        run: |
+          LAST_RUN_FILE=".last_historical_run"
+          if [ -f "$LAST_RUN_FILE" ]; then
+              LAST_RUN=$(cat $LAST_RUN_FILE)
+              echo "Last historical run: $LAST_RUN"
+              echo "already_ran=true" >> $GITHUB_OUTPUT
+          else
+              echo "No previous historical run found"
+              echo "already_ran=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Run ETL
         env:
@@ -45,17 +59,14 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
         run: |
-          if [ "${{ github.event.inputs.mode }}" = "historical" ]; then
-            echo "Running historical load..."
-            python entsoe_etl.py --historical
+          if [ "${{ steps.set_run_type.outputs.run_type }}" = "historical" ]; then
+              if [ "${{ steps.check_history.outputs.already_ran }}" = "true" ]; then
+                  echo "Historical ETL already completed. Skipping..."
+              else
+                  echo "Running historical load..."
+                  python entsoe_etl.py --historical
+                  date +"%Y-%m-%d %H:%M:%S" > .last_historical_run
+              fi
           else
-            echo "Running daily load..."
-            python entsoe_etl.py
-          fi
-
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: etl-log
-          path: entsoe_etl.log
+              echo "Running daily load..."
+              python entsoe_etl.py --daily
