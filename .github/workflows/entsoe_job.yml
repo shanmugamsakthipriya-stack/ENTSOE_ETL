@@ -70,3 +70,5 @@ jobs:
           else
               echo "Running daily load..."
               python entsoe_etl.py --daily
+          fi
+          
