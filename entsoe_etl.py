@@ -210,7 +210,8 @@ def fetch_and_store_dayahead_prices(period_start, period_end, country_name, bidd
             "in_Domain": bidding_zone,
             "out_Domain": bidding_zone,
             "periodStart": period_start,
-            "periodEnd": period_end
+            "periodEnd": period_end,
+            "contract_MarketAgreement.type": "A01"
         }
 
         response = requests.get(API_URL, params=PARAMS)
@@ -224,18 +225,31 @@ def fetch_and_store_dayahead_prices(period_start, period_end, country_name, bidd
         cet = pytz.timezone("Europe/Berlin")
 
         for ts in root.findall(".//ns:TimeSeries", ns):
-            start_time_str = ts.find("ns:Period/ns:timeInterval/ns:start", ns).text
-            start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
+            for period in ts.findall(".//ns:Period", ns):
+                start_time_str = period.find("ns:timeInterval/ns:start", ns).text
+                start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
+                resolution = period.find("ns:resolution", ns).text
+                if resolution == "PT15M":
+                    delta = timedelta(minutes=15)
+                elif resolution == "PT30M":
+                    delta = timedelta(minutes=30)
+                else:
+                    delta = timedelta(hours=1)
+                for point in period.findall("ns:Point",ns):
+                    position_el = point.find("ns:position", ns)
+                    price_el = point.find("ns:price.amount", ns)
+                    if position_el is None or price_el is None:
+                        continue
 
-            for point in ts.findall(".//ns:Point", ns):
-                position = int(point.find("ns:position", ns).text)
-                price = float(point.find("ns:price.amount", ns).text)
-
-                mtu_start = start_time + timedelta(minutes=15 * (position - 1))
-                mtu_end = mtu_start + timedelta(minutes=15)
-
-                data.append({
-                    "mtu": f"{mtu_start.strftime('%d.%m.%Y %H:%M')} - {mtu_end.strftime('%d.%m.%Y %H:%M')} (CET/CEST)",
+                    position = int(position_el.text)
+                    price = float(price_el.text)
+                    mtu_start = start_time + delta * (position - 1)
+                    mtu_end = mtu_start + delta
+                    
+                    data.append({
+                    #"mtu": f"{mtu_start.strftime('%d.%m.%Y %H:%M')} - {mtu_end.strftime('%d.%m.%Y %H:%M')} (CET/CEST)",
+                    "mtu_start": mtu_start,
+                    "mtu_end": mtu_end, 
                     "price_eur_mwh": price,
                     "country": country_name
                 })
@@ -258,7 +272,8 @@ def fetch_and_store_dayahead_prices(period_start, period_end, country_name, bidd
 
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS day_ahead_prices (
-            mtu TEXT,
+            mtu_start TIMESTAMP,
+            mtu_end TIMESTAMP,
             price_eur_mwh DOUBLE PRECISION,
             country TEXT,
             inserted_at TIMESTAMP DEFAULT now()
@@ -295,14 +310,15 @@ def historical_load():
         period_end = (current + timedelta(days=30)).strftime('%Y%m%d%H%M')
         for country_name, control_area in countries.items():
             fetch_and_store_data(period_start, period_end, country_name, control_area)
+            fetch_and_store_dayahead_prices(period_start, period_end, country_name, control_area)
         current += timedelta(days=30)
 
 
 # --- Daily load ---
 def daily_load():
-    yesterday = datetime.utcnow() - timedelta(days=1)
-    period_start = yesterday.strftime('%Y%m%d0000')
-    period_end = yesterday.strftime('%Y%m%d2300')
+    y = datetime.utcnow() - timedelta(days=1)
+    period_start = y.strftime('%Y%m%d0000')
+    period_end = (y + timedelta(days=1)).strftime('%Y%m%d0000')
     for country_name, control_area in countries.items():
         # Balancing reserve ETL
         fetch_and_store_data(period_start, period_end, country_name, control_area)
