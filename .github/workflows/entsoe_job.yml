@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload logs and historical marker
         if: always()   # Upload even if previous step fails
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: etl-artifacts
           path: |
