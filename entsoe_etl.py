@@ -55,7 +55,7 @@ germany_control_areas = {
     "TransnetBW": "10YDE-ENBW-----N",
     "TenneT": "10YDE-EON------1",
     "Amprion": "10YDE-RWENET---I",
-    "50Hertz": "10YDE-VEEN------N"
+    "50Hertz": "10YDE-VE-------2"
 }
 germany_bidding_zone = "10Y1001A1001A82H"  # DE-LU BZN
 
