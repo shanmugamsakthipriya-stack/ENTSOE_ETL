@@ -11,6 +11,7 @@ import logging
 import smtplib
 from email.mime.text import MIMEText
 import requests as req
+import argparse
 
 # --- Logging configuration ---
 logging.basicConfig(
@@ -344,8 +345,13 @@ def daily_load():
 
 # --- Entry point ---
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="ENTSOE ETL")
+    parser.add_argument('--historical', action='store_true', help='Run historical load')
+    parser.add_argument('--daily', action='store_true', help='Run daily load (default)')
+    args = parser.parse_args()
+
     try:
-        if '--historical' in sys.argv:
+        if args.historical:
             logging.info("Starting historical load...")
             historical_load()
         else:
