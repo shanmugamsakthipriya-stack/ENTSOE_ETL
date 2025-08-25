@@ -49,12 +49,27 @@ AZURE_PG_DB = os.environ.get("AZURE_PG_DB")
 AZURE_PG_USER = os.environ.get("AZURE_PG_USER")        
 AZURE_PG_PASSWORD = os.environ.get("AZURE_PG_PASSWORD") 
 
-# --- Define countries for future extension ---
-countries = {
-    "Germany": "10YDE-RWENET---I",
-    # Add other countries here
+# Updated Germany TSOs
+germany_control_areas = {
+    "TransnetBW": "10YDE-ENBW-----N",
+    "TenneT": "10YDE-EON------1",
+    "Amprion": "10YDE-RWENET---I",
+    "50Hertz": "10YDE-VEEN------N"
 }
+germany_bidding_zone = "10Y1001A1001A82H"  # DE-LU BZN
 
+# --- Helper to compute start/end times ---
+def get_time_interval(start_time, resolution, position):
+    if resolution == "PT15M":
+        delta = timedelta(minutes=15)
+    elif resolution == "PT30M":
+        delta = timedelta(minutes=30)
+    else:
+        delta = timedelta(hours=1)
+    point_start = start_time + delta * (position - 1)
+    point_end = point_start + delta
+    return point_start, point_end
+    
 # --- ETL function ---
 def fetch_and_store_data(period_start, period_end, country_name, control_area):
     try:
@@ -85,38 +100,42 @@ def fetch_and_store_data(period_start, period_end, country_name, control_area):
         for ts in root.findall(".//ns:TimeSeries", ns):
             reserve_type = ts.find("ns:type_MarketAgreement.type", ns)
             reserve_type = reserve_type.text if reserve_type is not None else None
+            
             reserve_source = ts.find("ns:mktPSRType.psrType", ns)
             reserve_source = reserve_source.text if reserve_source is not None else None
+            
             direction_code = ts.find("ns:flowDirection.direction", ns)
             direction_code = direction_code.text if direction_code is not None else None
             direction = direction_map.get(direction_code, direction_code)
+            
             product_type = ts.find("ns:standard_MarketProduct.marketProductType", ns)
             product_type = product_type.text if product_type is not None else None
+            
             time_horizon = ts.find("ns:type_MarketAgreement.type", ns)
             time_horizon = time_horizon.text if time_horizon is not None else None
+            
             price_type = "Marginal"
 
             for period in ts.findall("ns:Period", ns):
                 start_time_str = period.find("ns:timeInterval/ns:start", ns).text
-                resolution = period.find("ns:resolution", ns).text
                 start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
-
-                if resolution == "PT15M":
-                    delta = timedelta(minutes=15)
-                elif resolution == "PT30M":
-                    delta = timedelta(minutes=30)
-                else:
-                    delta = timedelta(hours=1)
+                
+                resolution = period.find("ns:resolution", ns).text
 
                 for point in period.findall("ns:Point", ns):
                     quantity_el = point.find("ns:quantity", ns)
                     price_el = point.find("ns:procurement_Price.amount", ns)
                     quantity = float(quantity_el.text) if quantity_el is not None else 0
                     price = float(price_el.text) if price_el is not None else 0
-
-                    end_time = start_time + delta
-                    delivery_period = f"{start_time.strftime('%d.%m.%Y %H:%M')} - {end_time.strftime('%d.%m.%Y %H:%M')} (CET/CEST)"
-
+                    
+                    # Compute timestamp for this point
+                    position_el = point.find("ns:position", ns)
+                    position = int(position_el.text) if position_el is not None else 1
+                    
+                    point_start, point_end = get_time_interval(start_time, resolution, position)
+                    
+                    delivery_period = f"{point_start.strftime('%d.%m.%Y %H:%M')} - {point_end.strftime('%d.%m.%Y %H:%M')} (CET/CEST)"
+                    
                     data.append({
                         "delivery_period": delivery_period,
                         "reserve_type": reserve_type,
@@ -127,12 +146,12 @@ def fetch_and_store_data(period_start, period_end, country_name, control_area):
                         "price_type": price_type,
                         "type_of_product": product_type,
                         "time_horizon": time_horizon,
-                        "country": country_name
+                        "country": country_name,
+                        "control_area": control_area 
                     })
-                    start_time += delta
 
         if not data:
-            logging.warning(f"No data returned for {country_name} {period_start} - {period_end}")
+            logging.warning(f"No data returned for {country_name} {control_area} {period_start} - {period_end}")
             return
 
         df = pd.DataFrame(data)
@@ -165,6 +184,7 @@ def fetch_and_store_data(period_start, period_end, country_name, control_area):
         # Self-healing columns
         required_columns = {
             "country": "TEXT",
+            "control_area": "TEXT",
             "inserted_at": "TIMESTAMP DEFAULT now()"
         }
         for col, col_type in required_columns.items():
@@ -229,12 +249,7 @@ def fetch_and_store_dayahead_prices(period_start, period_end, country_name, bidd
                 start_time_str = period.find("ns:timeInterval/ns:start", ns).text
                 start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc).astimezone(cet)
                 resolution = period.find("ns:resolution", ns).text
-                if resolution == "PT15M":
-                    delta = timedelta(minutes=15)
-                elif resolution == "PT30M":
-                    delta = timedelta(minutes=30)
-                else:
-                    delta = timedelta(hours=1)
+                
                 for point in period.findall("ns:Point",ns):
                     position_el = point.find("ns:position", ns)
                     price_el = point.find("ns:price.amount", ns)
@@ -243,8 +258,8 @@ def fetch_and_store_dayahead_prices(period_start, period_end, country_name, bidd
 
                     position = int(position_el.text)
                     price = float(price_el.text)
-                    mtu_start = start_time + delta * (position - 1)
-                    mtu_end = mtu_start + delta
+
+                    mtu_start, mtu_end = get_time_interval(start_time, resolution, position)
                     
                     data.append({
                     #"mtu": f"{mtu_start.strftime('%d.%m.%Y %H:%M')} - {mtu_end.strftime('%d.%m.%Y %H:%M')} (CET/CEST)",
@@ -308,9 +323,11 @@ def historical_load():
     while current < end_date:
         period_start = current.strftime('%Y%m%d%H%M')
         period_end = (current + timedelta(days=30)).strftime('%Y%m%d%H%M')
-        for country_name, control_area in countries.items():
-            fetch_and_store_data(period_start, period_end, country_name, control_area)
-            fetch_and_store_dayahead_prices(period_start, period_end, country_name, control_area)
+        # Balancing reserves per TSO
+        for tso_name, control_area in germany_control_areas.items():
+            fetch_and_store_data(period_start, period_end, f"Germany-{tso_name}", control_area)
+        # Day-ahead prices per bidding zone
+        fetch_and_store_dayahead_prices(period_start, period_end, "BZN|DE-LU", germany_bidding_zone)
         current += timedelta(days=30)
 
 
@@ -319,11 +336,11 @@ def daily_load():
     y = datetime.utcnow() - timedelta(days=1)
     period_start = y.strftime('%Y%m%d0000')
     period_end = (y + timedelta(days=1)).strftime('%Y%m%d0000')
-    for country_name, control_area in countries.items():
+    for tso_name, control_area in germany_control_areas.items():
         # Balancing reserve ETL
-        fetch_and_store_data(period_start, period_end, country_name, control_area)
-        # Day-ahead price ETL (use bidding zone same as control_area if needed)
-        fetch_and_store_dayahead_prices(period_start, period_end, country_name, control_area)
+        fetch_and_store_data(period_start, period_end, f"Germany-{tso_name}", control_area)
+    # Day-ahead prices per bidding zone
+    fetch_and_store_dayahead_prices(period_start, period_end, "BZN|DE-LU", germany_bidding_zone)
 
 # --- Entry point ---
 if __name__ == "__main__":
