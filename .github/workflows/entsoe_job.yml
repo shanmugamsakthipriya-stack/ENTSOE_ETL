@@ -20,6 +20,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: 3.10
+          check-latest: true
 
       # Step 3: Install dependencies
       - name: Install dependencies
@@ -27,9 +28,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Step 4: Run ETL
+      # Step 4: Run ENTSOE ETL
       - name: Run ENTSOE ETL
-        run: python etl.py
+        run: python entsoe_etl.py
         env:
           # PostgreSQL / Azure
           AZURE_PG_HOST: ${{ secrets.AZURE_PG_HOST }}
