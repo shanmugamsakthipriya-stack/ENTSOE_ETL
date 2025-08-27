@@ -143,7 +143,7 @@ def fetch_and_store_data(country_name, control_area, start_dt, end_dt):
                                 host=AZURE_PG_HOST, port=5432, sslmode='require')
         cursor = conn.cursor()
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS entsoe_load_data (
+        CREATE TABLE IF NOT EXISTS entsoe_load_data_Git(
             delivery_period TEXT,
             reserve_type TEXT,
             reserve_source TEXT,
@@ -164,8 +164,8 @@ def fetch_and_store_data(country_name, control_area, start_dt, end_dt):
             DO $$
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                               WHERE table_name='entsoe_load_data' AND column_name='{col}') THEN
-                    ALTER TABLE entsoe_load_data ADD COLUMN {col} {col_type};
+                               WHERE table_name='entsoe_load_data_Git' AND column_name='{col}') THEN
+                    ALTER TABLE entsoe_load_data_Git ADD COLUMN {col} {col_type};
                 END IF;
             END
             $$;
@@ -176,7 +176,7 @@ def fetch_and_store_data(country_name, control_area, start_dt, end_dt):
         columns = df.columns.tolist()
         values = [[r.get(col) for col in columns] for r in records]
         execute_values(cursor,
-                       f"INSERT INTO entsoe_load_data ({', '.join(columns)}) VALUES %s",
+                       f"INSERT INTO entsoe_load_data_Git ({', '.join(columns)}) VALUES %s",
                        values)
         conn.commit()
         cursor.close()
@@ -242,7 +242,7 @@ def fetch_and_store_dayahead_prices(country_name, bidding_zone, start_dt, end_dt
                                 host=AZURE_PG_HOST, port=5432, sslmode='require')
         cursor = conn.cursor()
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS day_ahead_prices (
+        CREATE TABLE IF NOT EXISTS day_ahead_prices_Git (
             delivery_period TEXT,
             price_eur_mwh DOUBLE PRECISION,
             resolution TEXT,
@@ -256,7 +256,7 @@ def fetch_and_store_dayahead_prices(country_name, bidding_zone, start_dt, end_dt
         columns = df.columns.tolist()
         values = [[r.get(col) for col in columns] for r in records]
         execute_values(cursor,
-                       f"INSERT INTO day_ahead_prices ({', '.join(columns)}) VALUES %s",
+                       f"INSERT INTO day_ahead_prices_Git ({', '.join(columns)}) VALUES %s",
                        values)
         conn.commit()
         cursor.close()
